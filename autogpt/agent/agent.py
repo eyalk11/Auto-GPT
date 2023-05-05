@@ -87,12 +87,20 @@ class Agent:
     def start_interaction_loop(self):
         # Avoid circular imports
         from autogpt.app import execute_command, get_command
+        def enter_input():
+            logger.info(
+                    "Enter 'y' to authorise command, 'y -N' to run N continuous commands, 's' to run self-feedback commands"
+                    "'n' to exit program, or enter feedback for "
+                    f"{self.ai_name}..."
+                )
 
         # Interaction Loop
         self.cycle_count = 0
         command_name = None
         arguments = None
         user_input = ""
+        setofexecuted=set()
+        
 
         # Signal handler for interrupting y -N
         def signal_handler(signum, frame):
@@ -172,6 +180,20 @@ class Agent:
 
                 except Exception as e:
                     logger.error("Error: \n", str(e))
+
+                try:
+                    from frozendict import frozendict
+                    argumentsdic=frozendict(arguments)
+                    if (command_name,argumentsdic) in setofexecuted:
+                        logger.info('Already executed this shit')
+                        tostop=True
+                    tostop=False 
+                    setofexecuted.add( (command_name,argumentsdic))
+                except Exception as e:
+                    logger.error(f"Exception {e} in adding to dic\n")
+                    tostop=False
+
+            
             self.log_cycle_handler.log_cycle(
                 self.ai_config.ai_name,
                 self.created_at,
@@ -189,7 +211,7 @@ class Agent:
                 f"ARGUMENTS = {Fore.CYAN}{arguments}{Style.RESET_ALL}",
             )
 
-            if not self.config.continuous_mode and self.next_action_count == 0:
+            if not self.config.continuous_mode and self.next_action_count == 0 or command_name in self.config.commands_to_stop or tostop:
                 # ### GET USER AUTHORIZATION TO EXECUTE COMMAND ###
                 # Get key press: Prompt the user to press enter to continue or escape
                 # to exit
@@ -199,17 +221,44 @@ class Agent:
                     "'n' to exit program, or enter feedback for "
                     f"{self.ai_name}..."
                 )
+                firstrun=True
                 while True:
-                    if self.config.chat_messages_enabled:
-                        console_input = clean_input(
-                            self.config, "Waiting for your response..."
-                        )
+                    if tostop:
+                        logger.info("Entering self-feedback because of already executed command")
+                        console_input="s"
+                    elif command_name in self.config.commands_to_ignore:
+                        console_input=self.config.authorise_key
+                    elif self.config.chat_messages_enabled:
+                        if firstrun:
+                            enter_input()
+                        console_input = clean_input("Waiting for your response...")
                     else:
+                        if firstrun:
+                            enter_input()
                         console_input = clean_input(
-                            self.config, Fore.MAGENTA + "Input:" + Style.RESET_ALL
+                            Fore.MAGENTA + "Input:" + Style.RESET_ALL
                         )
+                    firstrun=False
                     if console_input.lower().strip() == self.config.authorise_key:
                         user_input = "GENERATE NEXT COMMAND JSON"
+                        break
+                    elif console_input.lower().strip() == "s":
+                        logger.typewriter_log(
+                            "-=-=-=-=-=-=-= THOUGHTS, REASONING, PLAN AND CRITICISM WILL NOW BE VERIFIED BY AGENT -=-=-=-=-=-=-=",
+                            Fore.GREEN,
+                            "",
+                        )
+                        thoughts = assistant_reply_json.get("thoughts", {})
+                        self_feedback_resp = self.get_self_feedback(
+                            thoughts, self.config.fast_llm_model
+                        )
+                        logger.typewriter_log(
+                            f"SELF FEEDBACK: {self_feedback_resp}",
+                            Fore.YELLOW,
+                            "",
+                        )
+                        user_input = self_feedback_resp
+                        command_name = "self_feedback"
                         break
                     elif console_input.lower().strip() == "":
                         logger.warn("Invalid input format.")
@@ -294,7 +343,7 @@ class Agent:
                     if not plugin.can_handle_post_command():
                         continue
                     result = plugin.post_command(command_name, result)
-                if self.next_action_count > 0:
+                if self.next_action_count > 0 and command_name not in self.config.commands_to_ignore:
                     self.next_action_count -= 1
 
             # Check if there's a result from the command append it to the message

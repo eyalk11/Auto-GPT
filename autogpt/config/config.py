@@ -226,6 +226,11 @@ class Config(Configurable):
         if plugins_allowlist:
             config_dict["plugins_allowlist"] = plugins_allowlist.split(",")
 
+        self.plugins_denylist = []
+        self.commands_to_ignore= ["browse_website","google"]
+        self.commands_to_stop=["task_complete"]
+
+
         plugins_denylist = os.getenv("DENYLISTED_PLUGINS")
         if plugins_denylist:
             config_dict["plugins_denylist"] = plugins_denylist.split(",")
