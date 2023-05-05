@@ -150,11 +150,17 @@ class Config(metaclass=Singleton):
         else:
             self.plugins_allowlist = []
 
+        self.plugins_denylist = []
+        self.commands_to_ignore= ["browse_website","google"]
+        self.commands_to_stop=["task_complete"]
+
+
         plugins_denylist = os.getenv("DENYLISTED_PLUGINS")
         if plugins_denylist:
             self.plugins_denylist = plugins_denylist.split(",")
         else:
             self.plugins_denylist = []
+
 
     def get_azure_deployment_id_for_model(self, model: str) -> str:
         """

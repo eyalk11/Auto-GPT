@@ -80,12 +80,20 @@ class Agent:
         self.log_cycle_handler = LogCycleHandler()
 
     def start_interaction_loop(self):
+        def enter_input():
+            logger.info(
+                    "Enter 'y' to authorise command, 'y -N' to run N continuous commands, 's' to run self-feedback commands"
+                    "'n' to exit program, or enter feedback for "
+                    f"{self.ai_name}..."
+                )
         # Interaction Loop
         cfg = Config()
         self.cycle_count = 0
         command_name = None
         arguments = None
         user_input = ""
+        setofexecuted=set()
+        
 
         while True:
             # Discontinue if continuous limit is reached
@@ -140,6 +148,19 @@ class Agent:
 
                 except Exception as e:
                     logger.error("Error: \n", str(e))
+            try:
+                from frozendict import frozendict
+                argumentsdic=frozendict(arguments)
+                if (command_name,argumentsdic) in setofexecuted:
+                    logger.info('Already executed this shit')
+                    tostop=True
+                tostop=False 
+                setofexecuted.add( (command_name,argumentsdic))
+            except Exception as e:
+                logger.error(f"Exception {e} in adding to dic\n")
+                tostop=False
+
+            
             self.log_cycle_handler.log_cycle(
                 self.config.ai_name,
                 self.created_at,
@@ -148,7 +169,7 @@ class Agent:
                 NEXT_ACTION_FILE_NAME,
             )
 
-            if not cfg.continuous_mode and self.next_action_count == 0:
+            if not cfg.continuous_mode and self.next_action_count == 0 or command_name in cfg.commands_to_stop or tostop:
                 # ### GET USER AUTHORIZATION TO EXECUTE COMMAND ###
                 # Get key press: Prompt the user to press enter to continue or escape
                 # to exit
@@ -159,19 +180,25 @@ class Agent:
                     f"COMMAND = {Fore.CYAN}{command_name}{Style.RESET_ALL}  "
                     f"ARGUMENTS = {Fore.CYAN}{arguments}{Style.RESET_ALL}",
                 )
-
-                logger.info(
-                    "Enter 'y' to authorise command, 'y -N' to run N continuous commands, 's' to run self-feedback commands or "
-                    "'n' to exit program, or enter feedback for "
-                    f"{self.ai_name}..."
-                )
+         
+                firstrun=True
                 while True:
-                    if cfg.chat_messages_enabled:
+                    if tostop:
+                        logger.info("Entering self-feedback because of already executed command")
+                        console_input="s"
+                    elif command_name in cfg.commands_to_ignore:
+                        console_input=cfg.authorise_key
+                    elif cfg.chat_messages_enabled:
+                        if firstrun:
+                            enter_input()
                         console_input = clean_input("Waiting for your response...")
                     else:
+                        if firstrun:
+                            enter_input()
                         console_input = clean_input(
                             Fore.MAGENTA + "Input:" + Style.RESET_ALL
                         )
+                    firstrun=False
                     if console_input.lower().strip() == cfg.authorise_key:
                         user_input = "GENERATE NEXT COMMAND JSON"
                         break
@@ -273,7 +300,7 @@ class Agent:
                     if not plugin.can_handle_post_command():
                         continue
                     result = plugin.post_command(command_name, result)
-                if self.next_action_count > 0:
+                if self.next_action_count > 0 and command_name not in cfg.commands_to_ignore:
                     self.next_action_count -= 1
 
             # Check if there's a result from the command append it to the message
@@ -288,6 +315,8 @@ class Agent:
                 logger.typewriter_log(
                     "SYSTEM: ", Fore.YELLOW, "Unable to execute command"
                 )
+
+
 
     def _resolve_pathlike_command_args(self, command_args):
         if "directory" in command_args and command_args["directory"] in {"", "/"}:
