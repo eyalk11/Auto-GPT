@@ -15,5 +15,7 @@ services:
       REDIS_HOST: ${REDIS_HOST:-redis}
     volumes:
       - ../:/workspace/Auto-GPT
+    links:
+      - redis
   redis:
     image: 'redis/redis-stack-server:latest'
