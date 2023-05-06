@@ -1,3 +1,6 @@
+import asyncio
+import concurrent.futures
+import json
 from datetime import datetime
 
 from colorama import Fore, Style
@@ -15,7 +18,7 @@ from autogpt.log_cycle.log_cycle import (
 )
 from autogpt.logs import logger, print_assistant_thoughts
 from autogpt.speech import say_text
-from autogpt.spinner import Spinner
+from autogpt.spinner import Spinner, SpinnerInterrupted
 from autogpt.utils import clean_input
 from autogpt.workspace import Workspace
 
@@ -79,21 +82,44 @@ class Agent:
         self.cycle_count = 0
         self.log_cycle_handler = LogCycleHandler()
 
+    @staticmethod
+    async def async_task_and_spin(spn, some_task, args):
+        loop = asyncio.get_event_loop()
+        # Run the synchronous function in an executor
+        pool = concurrent.futures.ThreadPoolExecutor()
+        try:
+            task = loop.run_in_executor(pool, some_task, *args)
+            event_task = loop.run_in_executor(pool, spn.ended.wait)
+            # Wait for the task or the event to complete
+            done, pending = await asyncio.wait(
+                {task, event_task}, return_when=asyncio.FIRST_COMPLETED
+            )
+            # Cancel any pending tasks
+            for t in pending:
+                t.cancel()
+            # Check which task completed
+            if task in done:
+                result = await task
+                return result
+
+        finally:
+            pool.shutdown(wait=False)  # dont want to use 'with' because it waits...
+
     def start_interaction_loop(self):
         def enter_input():
             logger.info(
-                    "Enter 'y' to authorise command, 'y -N' to run N continuous commands, 's' to run self-feedback commands"
-                    "'n' to exit program, or enter feedback for "
-                    f"{self.ai_name}..."
-                )
+                "Enter 'y' to authorise command, 'y -N' to run N continuous commands, 's' to run self-feedback commands"
+                "'n' to exit program, or enter feedback for"
+                f"{self.ai_name}..."
+            )
+
         # Interaction Loop
         cfg = Config()
         self.cycle_count = 0
         command_name = None
         arguments = None
         user_input = ""
-        setofexecuted=set()
-        
+        setofexecuted = set()
 
         while True:
             # Discontinue if continuous limit is reached
@@ -115,22 +141,47 @@ class Agent:
                     "Continuous Limit Reached: ", Fore.YELLOW, f"{cfg.continuous_limit}"
                 )
                 break
-            # Send message to AI, get response
-            with Spinner("Thinking... "):
-                assistant_reply = chat_with_ai(
-                    self,
-                    self.system_prompt,
-                    self.triggering_prompt,
-                    self.full_message_history,
-                    self.memory,
-                    cfg.fast_token_limit,
-                )  # TODO: This hardcodes the model to use GPT3.5. Make this an argument
+            tmp_interrupt = False
 
-            assistant_reply_json = fix_json_using_multiple_techniques(assistant_reply)
-            for plugin in cfg.plugins:
-                if not plugin.can_handle_post_planning():
-                    continue
-                assistant_reply_json = plugin.post_planning(assistant_reply_json)
+            def upd():
+                logger.info("Soft interrupt")
+                nonlocal tmp_interrupt
+                tmp_interrupt = True
+
+            # Send message to AI, get response
+            try:
+                with Spinner(
+                    "Thinking... (q to quit, <space> to stop afterwards) ",
+                    interruptable=True,
+                    on_soft_interrupt=upd,
+                ) as spn:
+                    # convert this call to thread
+
+                    assistant_reply = asyncio.run(
+                        self.async_task_and_spin(
+                            spn,
+                            chat_with_ai,
+                            (
+                                self,
+                                self.system_prompt,
+                                self.triggering_prompt,
+                                self.full_message_history,
+                                self.memory,
+                                cfg.fast_token_limit,
+                            ),
+                        )
+                    )  # TODO: This hardcodes the model to use GPT3.5. Make this an argument
+
+                assistant_reply_json = fix_json_using_multiple_techniques(
+                    assistant_reply
+                )
+                for plugin in cfg.plugins:
+                    if not plugin.can_handle_post_planning():
+                        continue
+                    assistant_reply_json = plugin.post_planning(assistant_reply_json)
+            except SpinnerInterrupted:
+                logger.warn("Task canceled")
+                assistant_reply_json = {}
 
             # Print Assistant thoughts
             if assistant_reply_json != {}:
@@ -148,19 +199,17 @@ class Agent:
 
                 except Exception as e:
                     logger.error("Error: \n", str(e))
+            tostop = tmp_interrupt
             try:
-                from frozendict import frozendict
-                argumentsdic=frozendict(arguments)
-                if (command_name,argumentsdic) in setofexecuted:
-                    logger.info('Already executed this shit')
-                    tostop=True
-                tostop=False 
-                setofexecuted.add( (command_name,argumentsdic))
+                argumentsdic = json.dumps(arguments)
+                if (command_name, argumentsdic) in setofexecuted:
+                    logger.info("Already executed this shit")
+                    tostop = True
+
+                setofexecuted.add((command_name, argumentsdic))
             except Exception as e:
                 logger.error(f"Exception {e} in adding to dic\n")
-                tostop=False
 
-            
             self.log_cycle_handler.log_cycle(
                 self.config.ai_name,
                 self.created_at,
@@ -169,7 +218,12 @@ class Agent:
                 NEXT_ACTION_FILE_NAME,
             )
 
-            if not cfg.continuous_mode and self.next_action_count == 0 or command_name in cfg.commands_to_stop or tostop:
+            if (
+                not cfg.continuous_mode
+                and self.next_action_count == 0
+                or command_name in cfg.commands_to_stop
+                or tostop
+            ):
                 # ### GET USER AUTHORIZATION TO EXECUTE COMMAND ###
                 # Get key press: Prompt the user to press enter to continue or escape
                 # to exit
@@ -180,14 +234,16 @@ class Agent:
                     f"COMMAND = {Fore.CYAN}{command_name}{Style.RESET_ALL}  "
                     f"ARGUMENTS = {Fore.CYAN}{arguments}{Style.RESET_ALL}",
                 )
-         
-                firstrun=True
+
+                firstrun = True
                 while True:
                     if tostop:
-                        logger.info("Entering self-feedback because of already executed command")
-                        console_input="s"
+                        logger.info("Must stop in this case")
+                        if firstrun:
+                            enter_input()
+                        console_input = clean_input("Waiting for your response...")
                     elif command_name in cfg.commands_to_ignore:
-                        console_input=cfg.authorise_key
+                        console_input = cfg.authorise_key
                     elif cfg.chat_messages_enabled:
                         if firstrun:
                             enter_input()
@@ -198,7 +254,7 @@ class Agent:
                         console_input = clean_input(
                             Fore.MAGENTA + "Input:" + Style.RESET_ALL
                         )
-                    firstrun=False
+                    firstrun = False
                     if console_input.lower().strip() == cfg.authorise_key:
                         user_input = "GENERATE NEXT COMMAND JSON"
                         break
@@ -300,7 +356,10 @@ class Agent:
                     if not plugin.can_handle_post_command():
                         continue
                     result = plugin.post_command(command_name, result)
-                if self.next_action_count > 0 and command_name not in cfg.commands_to_ignore:
+                if (
+                    self.next_action_count > 0
+                    and command_name not in cfg.commands_to_ignore
+                ):
                     self.next_action_count -= 1
 
             # Check if there's a result from the command append it to the message
@@ -315,8 +374,6 @@ class Agent:
                 logger.typewriter_log(
                     "SYSTEM: ", Fore.YELLOW, "Unable to execute command"
                 )
-
-
 
     def _resolve_pathlike_command_args(self, command_args):
         if "directory" in command_args and command_args["directory"] in {"", "/"}:

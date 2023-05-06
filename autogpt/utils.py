@@ -49,7 +49,6 @@ def clean_input(prompt: str = "", talk=False):
                 return plugin_response
 
         # ask for input, default when just pressing Enter is y
-        logger.info("Asking user via keyboard...")
         answer = input(prompt)
         return answer
     except KeyboardInterrupt:
