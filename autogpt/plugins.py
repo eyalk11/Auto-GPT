@@ -220,7 +220,12 @@ def scan_plugins(cfg: Config, debug: bool = False) -> List[AutoGPTPluginTemplate
                 module = Path(module)
                 logger.debug(f"Plugin: {plugin} Module: {module}")
                 zipped_package = zipimporter(str(plugin))
-                zipped_module = zipped_package.load_module(str(module.parent))
+                try:
+                    zipped_module = zipped_package.load_module(str(module.parent))
+                except Exception as e:
+                    logger.error(f"failed loading {module}")
+                    continue
+
                 for key in dir(zipped_module):
                     if key.startswith("__"):
                         continue
