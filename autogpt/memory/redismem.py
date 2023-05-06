@@ -62,7 +62,7 @@ class RedisMemory(MemoryProviderSingleton):
                 " to ensure you've set up everything correctly."
             )
             exit(1)
-
+        logger.info(f"Connected to redis: {redis_host}:{redis_port}.")
         if cfg.wipe_redis_on_start:
             self.redis.flushall()
         try:
@@ -72,10 +72,12 @@ class RedisMemory(MemoryProviderSingleton):
                     prefix=[f"{cfg.memory_index}:"], index_type=IndexType.HASH
                 ),
             )
+            logger.warn("Index not exists. First time?!")
         except Exception as e:
             logger.warn("Error creating Redis search index: ", e)
         existing_vec_num = self.redis.get(f"{cfg.memory_index}-vec_num")
         self.vec_num = int(existing_vec_num.decode("utf-8")) if existing_vec_num else 0
+        logger.info(f"  Using {cfg.memory_index}:{self.vec_num}")
 
     def add(self, data: str) -> str:
         """

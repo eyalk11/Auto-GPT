@@ -144,7 +144,7 @@ class Agent:
             tmp_interrupt = False
 
             def upd():
-                logger.info("Soft interrupt")
+                logger.info("Soft interrupt\n")
                 nonlocal tmp_interrupt
                 tmp_interrupt = True
 
@@ -181,6 +181,9 @@ class Agent:
                     assistant_reply_json = plugin.post_planning(assistant_reply_json)
             except SpinnerInterrupted:
                 logger.warn("Task canceled")
+                assistant_reply_json = {}
+            except Exception as e:
+                logger.error(f"Error in task {e}")
                 assistant_reply_json = {}
 
             # Print Assistant thoughts
