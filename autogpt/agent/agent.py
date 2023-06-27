@@ -138,25 +138,49 @@ class Agent:
                     f"{self.config.continuous_limit}",
                 )
                 break
-            # Send message to AI, get response
-            with Spinner("Thinking... ", plain_output=self.config.plain_output):
-                assistant_reply = chat_with_ai(
-                    self.config,
-                    self,
-                    self.system_prompt,
-                    self.triggering_prompt,
-                    self.fast_token_limit,
-                    self.config.fast_llm_model,
-                )
+            tmp_interrupt = False
 
+            def upd():
+                logger.info("Soft interrupt")
+                nonlocal tmp_interrupt
+                tmp_interrupt = True
+
+            # Send message to AI, get response
             try:
-                assistant_reply_json = extract_json_from_response(
-                    assistant_reply.content
-                )
-                validate_json(assistant_reply_json, self.config)
-            except json.JSONDecodeError as e:
-                logger.error(f"Exception while validating assistant reply JSON: {e}")
-                assistant_reply_json = {}
+                with Spinner(
+                    "Thinking... (q to quit, <space> to stop afterwards) ",
+                    interruptable=True,
+                    on_soft_interrupt=upd,
+                ) as spn:
+                    # convert this call to thread
+
+                    assistant_reply = asyncio.run(
+                        self.async_task_and_spin(
+                            spn,
+                            chat_with_ai,
+                            (
+                                self,
+                                self.system_prompt,
+                                self.triggering_prompt,
+                                self.full_message_history,
+                                self.memory,
+                                cfg.fast_token_limit,
+                            ),
+                        )
+                    )  # TODO: This hardcodes the model to use GPT3.5. Make this an argument
+
+                try:
+                    assistant_reply_json = extract_json_from_response(
+                        assistant_reply.content
+                    )
+
+                    for plugin in cfg.plugins:
+                        if not plugin.can_handle_post_planning():
+                            continue
+                        assistant_reply_json = plugin.post_planning(assistant_reply_json)
+                except SpinnerInterrupted:
+                    logger.warn("Task canceled")
+                    assistant_reply_json = {}
 
             for plugin in self.config.plugins:
                 if not plugin.can_handle_post_planning():
