@@ -2,7 +2,7 @@
 import contextlib
 import os
 import re
-from typing import Dict
+from typing import Dict, List
 
 import yaml
 from colorama import Fore
@@ -11,6 +11,8 @@ from autogpt.core.configuration.schema import Configurable, SystemSettings
 
 AZURE_CONFIG_FILE = os.path.join(os.path.dirname(__file__), "../..", "azure.yaml")
 from typing import Optional
+
+splitifnotnone = lambda x: (x.split(",") if x is not None else None)
 
 
 class ConfigSettings(SystemSettings):
@@ -79,6 +81,8 @@ class ConfigSettings(SystemSettings):
     elevenlabs_voice_id: Optional[str]
     plugins: list[str]
     authorise_key: str
+    commands_to_ignore: Optional[List]
+    commands_to_stop: Optional[List]
 
 
 class Config(Configurable):
@@ -147,6 +151,8 @@ class Config(Configurable):
         plugins=[],
         authorise_key="y",
         redis_password="",
+        commands_to_ignore=["browse_website", "google"],
+        commands_to_stop=["task_complete"],
     )
 
     @classmethod
@@ -196,6 +202,8 @@ class Config(Configurable):
             "plugins_dir": os.getenv("PLUGINS_DIR"),
             "plugins_config_file": os.getenv("PLUGINS_CONFIG_FILE"),
             "chat_messages_enabled": os.getenv("CHAT_MESSAGES_ENABLED") == "True",
+            "commands_to_ignore": splitifnotnone(os.getenv("COMMANDS_TO_IGNORE")),
+            "commands_to_stop": splitifnotnone(os.getenv("COMMANDS_TO_STOP")),
         }
 
         # Converting to a list from comma-separated string
@@ -225,11 +233,6 @@ class Config(Configurable):
         plugins_allowlist = os.getenv("ALLOWLISTED_PLUGINS")
         if plugins_allowlist:
             config_dict["plugins_allowlist"] = plugins_allowlist.split(",")
-
-        self.plugins_denylist = []
-        self.commands_to_ignore= ["browse_website","google"]
-        self.commands_to_stop=["task_complete"]
-
 
         plugins_denylist = os.getenv("DENYLISTED_PLUGINS")
         if plugins_denylist:
