@@ -94,7 +94,6 @@ class Agent:
         self.fast_token_limit = OPEN_AI_CHAT_MODELS.get(
             config.fast_llm_model
         ).max_tokens
-        self.setofexecuted = set()
 
     @staticmethod
     async def async_task_and_spin(spn, some_task, args):
@@ -241,7 +240,7 @@ class Agent:
                 args = (command_name, arguments) = self.get_next_command_to_execute(
                     assistant_reply, assistant_reply_json
                 )
-                tostop = self.check_if_command_exist(*args)
+                tostop = False
 
             tostop = tostop or (
                 status != InteractionResult.OK
@@ -369,23 +368,6 @@ class Agent:
             logger.error("Error: \n", str(e))
 
         return command_name, arguments
-
-    def check_if_command_exist(self, command_name, arguments):
-        try:
-            tostop = False
-            from frozendict import frozendict
-
-            arguments_hash = hash(frozendict(arguments))
-
-            if (command_name, arguments_hash) in self.setofexecuted:
-                logger.info("Already executed this shit, stopping.")
-                tostop = True
-
-            self.setofexecuted.add((command_name, arguments_hash))
-        except Exception as e:
-            logger.error(f"Exception {e} in adding to dic\n")
-            tostop = False
-        return tostop
 
     def interact_with_assistant(self, command_name):
         status = InteractionResult.OK
