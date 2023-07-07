@@ -6,6 +6,7 @@ import select
 import sys
 import threading
 import time
+import types
 from typing import Any, Callable, List, Optional
 
 if os.name == "nt":
@@ -52,7 +53,7 @@ class Spinner:
         self.delay = delay
         self.message = message
         self.running = False
-        self.spinner_thread = None
+        self.spinner_thread: Optional[RaisingThread] = None
         self.interruptable = interruptable
         self.on_soft_interrupt = on_soft_interrupt
         self.ended = threading.Event()
@@ -75,8 +76,10 @@ class Spinner:
         ) -> bool:
             if keyboard_key is None:
                 keyboard_key = key_to_check
-            if (pressed_key and (pressed_key == key_to_check)) or (
-                os.name == "nt" and keyboard.is_pressed(keyboard_key)
+            if (
+                pressed_key
+                and pressed_key == key_to_check
+                or (os.name == "nt" and keyboard.is_pressed(keyboard_key))
             ):
                 return True
             return False
@@ -120,14 +123,17 @@ class Spinner:
         except:
             self.oldtty = None
 
-        self.spinner_thread: RaisingThread = RaisingThread(  # type: ignore
-            target=self.spin
-        )
-        self.spinner_thread.start()  # type: ignore
+        self.spinner_thread = RaisingThread(target=self.spin)
+        self.spinner_thread.start()
 
         return self
 
-    def __exit__(self, exc_type, exc_value, exc_traceback) -> None:  # type: ignore
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        exc_traceback: types.TracebackType | None,
+    ) -> None:
         """Stop the spinner
 
         Args:
